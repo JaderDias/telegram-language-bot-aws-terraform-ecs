@@ -80,11 +80,18 @@ func Parse(s string) Word {
 	}
 }
 
-func getPoll(dictionary []string) tgbotapi.SendPollConfig {
+func getPoll(dictionary []string, correctLineNumber int) (int, tgbotapi.SendPollConfig) {
 	options := [3]Word{}
 	grammaticalClass := ""
 	for i := 0; i < 3; {
 		lineNumber := rand.Intn(len(dictionary))
+		if i == 0 {
+			if correctLineNumber != -1 {
+				lineNumber = correctLineNumber
+			} else {
+				correctLineNumber = lineNumber
+			}
+		}
 		options[i] = Parse(dictionary[lineNumber])
 		if options[i].err != nil {
 			log.Printf("Error while parsing line %d: %s", lineNumber, options[i].err)
@@ -100,9 +107,14 @@ func getPoll(dictionary []string) tgbotapi.SendPollConfig {
 	}
 
 	correctAnswerIndex := rand.Intn(3)
-	correctAnswer := options[correctAnswerIndex]
+	if correctAnswerIndex != 0 {
+		aux := options[0]
+		options[0] = options[correctAnswerIndex]
+		options[correctAnswerIndex] = aux
+	}
 
-	return tgbotapi.SendPollConfig{
+	correctAnswer := options[correctAnswerIndex]
+	return correctLineNumber, tgbotapi.SendPollConfig{
 		Type:     "quiz",
 		Question: fmt.Sprintf("%s (%s)", correctAnswer.mainDefinition, correctAnswer.grammaticalClass),
 		Options: []string{
@@ -115,8 +127,25 @@ func getPoll(dictionary []string) tgbotapi.SendPollConfig {
 	}
 }
 
-func sendPoll(dictionary []string, bot *tgbotapi.BotAPI, chatID int64, pollChatIds map[string]int64) {
-	sendPollConfig := getPoll(dictionary)
+type poll struct {
+	chatID         int64
+	wordLineNumber int
+}
+
+func sendPoll(
+	dictionary []string,
+	bot *tgbotapi.BotAPI,
+	chatID int64,
+	polls map[string]poll,
+	chatIdWords map[int64][]int,
+) {
+	words := chatIdWords[chatID]
+	correctLineNumber := -1
+	if len(words) > 0 {
+		correctLineNumber = words[0]
+		chatIdWords[chatID] = words[1:]
+	}
+	correctLineNumber, sendPollConfig := getPoll(dictionary, correctLineNumber)
 	sendPollConfig.BaseChat = tgbotapi.BaseChat{
 		ChatID: chatID,
 	}
@@ -127,7 +156,10 @@ func sendPoll(dictionary []string, bot *tgbotapi.BotAPI, chatID int64, pollChatI
 		return
 	}
 
-	pollChatIds[message.Poll.ID] = chatID
+	polls[message.Poll.ID] = poll{
+		chatID:         chatID,
+		wordLineNumber: correctLineNumber,
+	}
 }
 
 func main() {
@@ -147,14 +179,15 @@ func main() {
 	updates := bot.GetUpdatesChan(u)
 	dictionary := loadDictionary()
 	subscribers := make(map[int64]bool)
-	pollChatIds := make(map[string]int64)
+	polls := make(map[string]poll)
+	chatIdWords := make(map[int64][]int)
 
 	// start a separate thread to send a message every hour
 	go func() {
 		for {
 			time.Sleep(time.Hour)
 			for subscriber := range subscribers {
-				sendPoll(dictionary, bot, subscriber, pollChatIds)
+				sendPoll(dictionary, bot, subscriber, polls, chatIdWords)
 			}
 		}
 	}()
@@ -162,13 +195,19 @@ func main() {
 	for update := range updates {
 		if update.Message != nil { // If we got a message
 			log.Printf("[%s] %s", update.Message.From.UserName, update.Message.Text)
-			sendPoll(dictionary, bot, update.Message.Chat.ID, pollChatIds)
+			sendPoll(dictionary, bot, update.Message.Chat.ID, polls, chatIdWords)
 
 			// add to the subscribers list
 			subscribers[update.Message.Chat.ID] = true
 		} else if update.Poll != nil {
 			log.Printf("poll %#v", update.Poll)
-			sendPoll(dictionary, bot, pollChatIds[update.Poll.ID], pollChatIds)
+			poll := polls[update.Poll.ID]
+			sendPoll(dictionary, bot, poll.chatID, polls, chatIdWords)
+
+			// if the answer was incorrect
+			if update.Poll.Options[update.Poll.CorrectOptionID].VoterCount == 0 {
+				chatIdWords[poll.chatID] = append(chatIdWords[poll.chatID], poll.wordLineNumber)
+			}
 		}
 	}
 }
