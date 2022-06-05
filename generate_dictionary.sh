@@ -1,6 +1,9 @@
 #!/bin/bash -x
 
-SH_DICT="project/sh.csv"
+source_path="$1" # 1st argument from command line
+
+SH_DICT="${source_path}/sh.csv"
+
 if [ ! -f "$SH_DICT" ]; then
     DUMP_XML_BZ2="enwiktionary-latest-pages-articles-multistream.xml.bz2"
     if [ ! -f "../$DUMP_XML_BZ2" ]; then

@@ -15,7 +15,7 @@ variable "region" {
 
 variable "source_path" {
   description = "source path for project"
-  default     = "./project"
+  default     = "./golang/bot"
 }
 
 variable "tag" {
@@ -215,7 +215,7 @@ resource "null_resource" "generate_dictionary" {
     always_run = "${timestamp()}"
   }
   provisioner "local-exec" {
-    command     = "./generate_dictionary.sh"
+    command     = "./generate_dictionary.sh ${var.source_path}"
     interpreter = ["bash", "-c"]
   }
 }
