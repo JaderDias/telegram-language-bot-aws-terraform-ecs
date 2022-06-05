@@ -132,19 +132,30 @@ type poll struct {
 	wordLineNumber int
 }
 
+type chat struct {
+	wrongAnswers []int
+	rightAnswers []int
+}
+
 func sendPoll(
 	dictionary []string,
 	bot *tgbotapi.BotAPI,
 	chatID int64,
 	polls map[string]poll,
-	chatIdWords map[int64][]int,
+	chats map[int64]*chat,
 ) {
-	words := chatIdWords[chatID]
+	thisChat := chats[chatID]
 	correctLineNumber := -1
-	if len(words) > 0 {
-		correctLineNumber = words[0]
-		chatIdWords[chatID] = words[1:]
+	if thisChat != nil {
+		if len(thisChat.wrongAnswers) > 0 {
+			correctLineNumber = thisChat.wrongAnswers[0]
+			thisChat.wrongAnswers = thisChat.wrongAnswers[1:]
+		} else if len(thisChat.rightAnswers) > 0 && rand.Float32() > .5 {
+			correctLineNumber = thisChat.rightAnswers[0]
+			thisChat.rightAnswers = thisChat.rightAnswers[1:]
+		}
 	}
+
 	correctLineNumber, sendPollConfig := getPoll(dictionary, correctLineNumber)
 	sendPollConfig.BaseChat = tgbotapi.BaseChat{
 		ChatID: chatID,
@@ -180,14 +191,14 @@ func main() {
 	dictionary := loadDictionary()
 	subscribers := make(map[int64]bool)
 	polls := make(map[string]poll)
-	chatIdWords := make(map[int64][]int)
+	chats := make(map[int64]*chat)
 
 	// start a separate thread to send a message every hour
 	go func() {
 		for {
 			time.Sleep(time.Hour)
 			for subscriber := range subscribers {
-				sendPoll(dictionary, bot, subscriber, polls, chatIdWords)
+				sendPoll(dictionary, bot, subscriber, polls, chats)
 			}
 		}
 	}()
@@ -195,18 +206,26 @@ func main() {
 	for update := range updates {
 		if update.Message != nil { // If we got a message
 			log.Printf("[%s] %s", update.Message.From.UserName, update.Message.Text)
-			sendPoll(dictionary, bot, update.Message.Chat.ID, polls, chatIdWords)
+			sendPoll(dictionary, bot, update.Message.Chat.ID, polls, chats)
 
 			// add to the subscribers list
 			subscribers[update.Message.Chat.ID] = true
 		} else if update.Poll != nil {
 			log.Printf("poll %#v", update.Poll)
 			poll := polls[update.Poll.ID]
-			sendPoll(dictionary, bot, poll.chatID, polls, chatIdWords)
+			sendPoll(dictionary, bot, poll.chatID, polls, chats)
 
 			// if the answer was incorrect
+			thisChat := chats[poll.chatID]
+			if thisChat == nil {
+				aChat := chat{}
+				thisChat = &aChat
+				chats[poll.chatID] = thisChat
+			}
 			if update.Poll.Options[update.Poll.CorrectOptionID].VoterCount == 0 {
-				chatIdWords[poll.chatID] = append(chatIdWords[poll.chatID], poll.wordLineNumber)
+				thisChat.wrongAnswers = append(thisChat.wrongAnswers, poll.wordLineNumber)
+			} else {
+				thisChat.rightAnswers = append(thisChat.rightAnswers, poll.wordLineNumber)
 			}
 		}
 	}
