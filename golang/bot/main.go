@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"log"
 	"math/rand"
+	"regexp"
+	"time"
 
 	"os"
 
@@ -28,6 +30,12 @@ func loadDictionary() []string {
 	return words
 }
 
+// extract the definition from a string using regular expressions
+func extractDefinition(s string) string {
+	re := regexp.MustCompile(`\[.*\]`)
+	return re.FindString(s)
+}
+
 func main() {
 	telegramBotToken := os.Args[1]
 	bot, err := tgbotapi.NewBotAPI(telegramBotToken)
@@ -44,6 +52,19 @@ func main() {
 
 	updates := bot.GetUpdatesChan(u)
 	dictionary := loadDictionary()
+	subscribers := make(map[int64]bool)
+
+	// start a separate thread to send a message every hour
+	go func() {
+		for {
+			time.Sleep(time.Hour)
+			randomIndex := rand.Intn(len(dictionary))
+			for subscriber, _ := range subscribers {
+				msg := tgbotapi.NewMessage(subscriber, dictionary[randomIndex])
+				bot.Send(msg)
+			}
+		}
+	}()
 
 	for update := range updates {
 		if update.Message != nil { // If we got a message
@@ -54,6 +75,9 @@ func main() {
 			msg.ReplyToMessageID = update.Message.MessageID
 
 			bot.Send(msg)
+
+			// add to the subscribers list
+			subscribers[update.Message.Chat.ID] = true
 		}
 	}
 }
