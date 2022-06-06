@@ -5,7 +5,8 @@ variable "prefix" {
 
 variable "port" {
   description = "port the container exposes, that the load balancer should forward port 80 to"
-  default     = "4000"
+  default     = 4000
+  type        = number
 }
 
 variable "region" {
@@ -158,22 +159,48 @@ resource "aws_s3_object" "object" {
 }
 
 resource "aws_ecs_task_definition" "service" {
-  family                   = "${var.prefix}-task-family"
-  network_mode             = "awsvpc"
-  execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
-  cpu                      = 256
-  memory                   = 2048
+  family             = "${var.prefix}-task-family"
+  network_mode       = "awsvpc"
+  execution_role_arn = aws_iam_role.ecs_task_execution_role.arn
+  cpu                = 256 # 256 is the minimum and reperesents 0.25 vCPUs
+  memory             = 512 # 512 MB is the minimum
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
   requires_compatibilities = ["FARGATE"]
-  container_definitions = templatefile("./app.json.tpl", {
-    aws_ecr_repository = aws_ecr_repository.repo.repository_url
-    tag                = "latest"
-    app_port           = 80
-    region             = "${var.region}"
-    prefix             = "${var.prefix}"
-    envvars            = var.envvars
-    port               = var.port
-    telegram_bot_token = var.telegram_bot_token
-  })
+  container_definitions = jsonencode([{
+    name      = "${var.prefix}-task-service"
+    command   = ["${var.telegram_bot_token}"]
+    image     = "${aws_ecr_repository.repo.repository_url}:latest"
+    essential = true
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-region        = "${var.region}"
+        awslogs-stream-prefix = "${var.prefix}-service"
+        awslogs-group         = "${var.prefix}-log-group"
+      }
+    }
+    portMappings = [
+      {
+        containerPort = var.port
+        hostPort      = var.port
+        protocol      = "tcp"
+      }
+    ]
+    ulimits = [
+      {
+        name      = "nofile"
+        softLimit = 65536
+        hardLimit = 65536
+      }
+    ]
+    mountPoints = []
+    cpu         = 256 # 256 is the minimum and reperesents 0.25 vCPUs
+    memory      = 512 # 512 MB is the minimum
+    volumesFrom = []
+  }])
   tags = {
     Environment = "staging"
     Application = "${var.prefix}-app"

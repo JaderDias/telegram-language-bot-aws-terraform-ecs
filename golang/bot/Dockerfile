@@ -6,7 +6,7 @@ COPY go.mod go.sum *.csv ./
 RUN go mod download
 COPY . .
 
-RUN go build -o /go/bin/app main.go
+RUN GOARCH=arm64 go build -o /go/bin/app main.go
 
 
 # Now copy it into our base image.
